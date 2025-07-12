@@ -118,6 +118,23 @@ When using this MCP server with Claude, you can:
    "Generate a report from the stress test results"
    ```
 
+## Project Structure
+
+### Step 0: Foundation
+Basic MCP server with k6 integration:
+- Static test target (web server)
+- Dynamic script generation for load/stress tests
+- Basic report generation from k6 output
+- Manual test execution
+
+### Step 1: Dynamic Container Testing
+Advanced testing with Docker Compose integration:
+- Accepts any Docker Compose file
+- Automatic OpenAPI/Swagger discovery
+- Natural language UI test generation
+- SQLite database for historical tracking
+- SLA monitoring and comparison
+
 ## Architecture
 
 The MCP server acts as a bridge between Claude and k6, allowing natural language commands to be translated into performance tests. The server:
@@ -125,6 +142,43 @@ The MCP server acts as a bridge between Claude and k6, allowing natural language
 - Executes tests using the k6 CLI
 - Returns results in a readable format
 - Supports various testing patterns (load, stress, spike, browser)
+
+## Logging and Monitoring
+
+The MCP servers write detailed JSON logs to help with debugging and monitoring:
+
+### Log Location
+- Default: `~/.speak-perf-mcp/logs/`
+- Override with `MCP_LOG_DIR` environment variable
+- When using Makefile: `./logs/`
+
+### Viewing Logs
+```bash
+# List available log files
+make logs
+
+# Tail the latest log file
+make tail-log
+
+# Tail a specific log file
+tail -f logs/mcp-server-2024-01-15-10-30-45.log
+```
+
+### Log Format
+Logs are in JSON format with the following fields:
+- `level`: INFO or ERROR
+- `timestamp`: RFC3339 nano format
+- `message`: Log message
+- Additional context fields as needed
+
+### Progress Reporting
+The MCP server logs progress updates for long-running operations like:
+- Test execution status
+- Script generation
+- Result parsing
+- Environment setup
+
+These progress updates are intended to be forwarded to MCP clients in the future.
 
 ## Development
 

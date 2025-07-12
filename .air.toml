@@ -3,8 +3,8 @@ testdata_dir = "testdata"
 tmp_dir = "tmp"
 
 [build]
-  # Build both MCP server and web server for step0
-  cmd = "go work sync && cd step0/mcp && go build -o ../../tmp/mcp-server-step0 . && cd ../web && go build -o ../../tmp/web-server-step0 ."
+  # Build both MCP server and web server for step0 and step1
+  cmd = "go work sync && cd step0/mcp && go build -o ../../tmp/mcp-server-step0 . && cd ../web && go build -o ../../tmp/web-server-step0 . && cd ../../step1/mcp && go build -o ../../tmp/mcp-server-step1 ."
   # Run the web server by default (you can run MCP server separately)
   bin = "./tmp/web-server-step0"
   full_bin = ""
@@ -15,8 +15,8 @@ tmp_dir = "tmp"
   exclude_regex = ["_test.go"]
   exclude_unchanged = false
   follow_symlink = false
-  # Watch both mcp and web directories in step0
-  include_dir = ["step0/mcp", "step0/web"]
+  # Watch both mcp and web directories in step0 and step1
+  include_dir = ["step0/mcp", "step0/web", "step1/mcp"]
   include_ext = ["go", "tpl", "tmpl", "html"]
   include_file = []
   kill_delay = "0s"
