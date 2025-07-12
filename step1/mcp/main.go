@@ -13,10 +13,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -25,274 +23,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// LogLevel represents different logging levels
-type LogLevel string
-
-const (
-	LogLevelDEBUG LogLevel = "DEBUG"
-	LogLevelINFO  LogLevel = "INFO"
-	LogLevelWARN  LogLevel = "WARN"
-	LogLevelERROR LogLevel = "ERROR"
-	LogLevelFATAL LogLevel = "FATAL"
-)
-
-// LogEntry represents a structured log entry
-type LogEntry struct {
-	Level       LogLevel               `json:"level"`
-	Timestamp   string                 `json:"timestamp"`
-	Message     string                 `json:"message"`
-	Error       string                 `json:"error,omitempty"`
-	RequestID   string                 `json:"request_id,omitempty"`
-	Tool        string                 `json:"tool,omitempty"`
-	Duration    string                 `json:"duration,omitempty"`
-	SessionID   int64                  `json:"session_id,omitempty"`
-	Data        map[string]interface{} `json:"data,omitempty"`
-	Stack       string                 `json:"stack,omitempty"`
-	Component   string                 `json:"component,omitempty"`
-	Operation   string                 `json:"operation,omitempty"`
-	UserContext map[string]interface{} `json:"user_context,omitempty"`
-}
-
 var (
-	db         *sql.DB
-	fileLogger *log.Logger
-	logMutex   sync.Mutex
-	mcpServer  *server.MCPServer
-	logLevel   LogLevel = LogLevelINFO
+	db        *sql.DB
+	mcpServer *server.MCPServer
 )
 
 func init() {
-	// Set log level from environment
-	if envLevel := os.Getenv("MCP_LOG_LEVEL"); envLevel != "" {
-		switch strings.ToUpper(envLevel) {
-		case "DEBUG":
-			logLevel = LogLevelDEBUG
-		case "INFO":
-			logLevel = LogLevelINFO
-		case "WARN":
-			logLevel = LogLevelWARN
-		case "ERROR":
-			logLevel = LogLevelERROR
-		case "FATAL":
-			logLevel = LogLevelFATAL
-		}
-	}
-
 	// Initialize logging
-	initializeLogging()
-}
-
-func initializeLogging() {
-	// Use environment variable or current directory
-	logDir := os.Getenv("MCP_LOG_DIR")
-	if logDir == "" {
-		// Try to use a standard location
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			logDir = "logs"
-		} else {
-			logDir = filepath.Join(homeDir, ".speak-perf-mcp", "logs")
-		}
-	}
-
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		log.Printf("Failed to create logs directory: %v", err)
-		return
-	}
-
-	// Create log file with timestamp
-	logFile := filepath.Join(logDir, fmt.Sprintf("mcp-server-step1-%s.log", time.Now().Format("2006-01-02-15-04-05")))
-	file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		log.Printf("Failed to open log file: %v", err)
-		return
-	}
-
-	fileLogger = log.New(file, "", 0) // No prefix for clean JSON
-	logWithLevel(LogLevelINFO, "MCP Server Step1 logging initialized", nil, map[string]interface{}{
-		"logFile":    logFile,
-		"logLevel":   logLevel,
-		"version":    "1.0.0",
-		"go_version": runtime.Version(),
-		"os":         runtime.GOOS,
-		"arch":       runtime.GOARCH,
-	})
-}
-
-func shouldLog(level LogLevel) bool {
-	levels := map[LogLevel]int{
-		LogLevelDEBUG: 0,
-		LogLevelINFO:  1,
-		LogLevelWARN:  2,
-		LogLevelERROR: 3,
-		LogLevelFATAL: 4,
-	}
-	return levels[level] >= levels[logLevel]
-}
-
-func logWithLevel(level LogLevel, message string, err error, data map[string]interface{}) {
-	if !shouldLog(level) {
-		return
-	}
-
-	logMutex.Lock()
-	defer logMutex.Unlock()
-
-	if fileLogger != nil {
-		entry := LogEntry{
-			Level:     level,
-			Timestamp: time.Now().Format(time.RFC3339Nano),
-			Message:   message,
-			Data:      data,
-		}
-
-		if err != nil {
-			entry.Error = err.Error()
-		}
-
-		// Add stack trace for errors and above
-		if level == LogLevelERROR || level == LogLevelFATAL {
-			entry.Stack = getStackTrace()
-		}
-
-		jsonData, _ := json.Marshal(entry)
-		fileLogger.Println(string(jsonData))
-
-		// Also log to stderr for errors and fatal
-		if level == LogLevelERROR || level == LogLevelFATAL {
-			log.Printf("[%s] %s: %s", level, message, entry.Error)
-		}
-	}
-}
-
-func logDebug(message string, data map[string]interface{}) {
-	logWithLevel(LogLevelDEBUG, message, nil, data)
-}
-
-func logInfo(message string, data map[string]interface{}) {
-	logWithLevel(LogLevelINFO, message, nil, data)
-}
-
-func logWarn(message string, data map[string]interface{}) {
-	logWithLevel(LogLevelWARN, message, nil, data)
-}
-
-func logError(message string, err error, data map[string]interface{}) {
-	logWithLevel(LogLevelERROR, message, err, data)
-}
-
-func logFatal(message string, err error, data map[string]interface{}) {
-	logWithLevel(LogLevelFATAL, message, err, data)
-}
-
-// Enhanced logging functions with context
-func logToolStart(tool string, requestID string, params map[string]interface{}) {
-	logInfo("Tool execution started", map[string]interface{}{
-		"tool":       tool,
-		"request_id": requestID,
-		"params":     params,
-		"component":  "tool_handler",
-	})
-}
-
-func logToolEnd(tool string, requestID string, duration time.Duration, success bool, data map[string]interface{}) {
-	level := LogLevelINFO
-	if !success {
-		level = LogLevelERROR
-	}
-
-	logData := map[string]interface{}{
-		"tool":       tool,
-		"request_id": requestID,
-		"duration":   duration.String(),
-		"success":    success,
-		"component":  "tool_handler",
-	}
-
-	for k, v := range data {
-		logData[k] = v
-	}
-
-	logWithLevel(level, "Tool execution completed", nil, logData)
-}
-
-func logDatabaseOperation(operation string, duration time.Duration, err error, data map[string]interface{}) {
-	level := LogLevelDEBUG
-	if err != nil {
-		level = LogLevelERROR
-	}
-
-	logData := map[string]interface{}{
-		"operation": operation,
-		"duration":  duration.String(),
-		"component": "database",
-	}
-
-	for k, v := range data {
-		logData[k] = v
-	}
-
-	logWithLevel(level, "Database operation", err, logData)
-}
-
-func logContainerOperation(operation string, projectName string, duration time.Duration, err error, data map[string]interface{}) {
-	level := LogLevelINFO
-	if err != nil {
-		level = LogLevelERROR
-	}
-
-	logData := map[string]interface{}{
-		"operation":    operation,
-		"project_name": projectName,
-		"duration":     duration.String(),
-		"component":    "container",
-	}
-
-	for k, v := range data {
-		logData[k] = v
-	}
-
-	logWithLevel(level, "Container operation", err, logData)
-}
-
-func logTestExecution(testType string, testID int64, duration time.Duration, metrics map[string]interface{}) {
-	logInfo("Test execution completed", map[string]interface{}{
-		"test_type": testType,
-		"test_id":   testID,
-		"duration":  duration.String(),
-		"metrics":   metrics,
-		"component": "test_runner",
-	})
-}
-
-func logPerformanceMetrics(operation string, duration time.Duration, data map[string]interface{}) {
-	logData := map[string]interface{}{
-		"operation": operation,
-		"duration":  duration.String(),
-		"component": "performance",
-	}
-
-	for k, v := range data {
-		logData[k] = v
-	}
-
-	logDebug("Performance metrics", logData)
-}
-
-func getStackTrace() string {
-	buf := make([]byte, 4096)
-	n := runtime.Stack(buf, false)
-	return string(buf[:n])
-}
-
-func generateRequestID() string {
-	return fmt.Sprintf("req_%d_%d", time.Now().UnixNano(), os.Getpid())
+	InitializeLogging()
 }
 
 func sendProgress(ctx context.Context, progress string, data map[string]interface{}) {
 	if mcpServer != nil {
 		// Log the progress
-		logInfo("Progress update", map[string]interface{}{
+		LogInfo("Progress update", map[string]interface{}{
 			"progress":  progress,
 			"component": "progress",
 			"data":      data,
@@ -309,7 +53,7 @@ func sendProgress(ctx context.Context, progress string, data map[string]interfac
 
 		// TODO: Send notification when MCP-Go library supports it
 		// For now, we'll just log the progress
-		logDebug("Progress notification prepared", progressData)
+		LogDebug("Progress notification prepared", progressData)
 	}
 }
 
@@ -317,19 +61,19 @@ func main() {
 	startTime := time.Now()
 
 	// Initialize database
-	logInfo("Initializing database", nil)
+	LogInfo("Initializing database", nil)
 	dbStart := time.Now()
 	initDB()
-	logPerformanceMetrics("database_init", time.Since(dbStart), nil)
+	LogPerformanceMetrics("database_init", time.Since(dbStart), nil)
 	defer func() {
 		if err := db.Close(); err != nil {
-			logError("Failed to close database", err, nil)
+			LogError("Failed to close database", err, nil)
 		} else {
-			logInfo("Database closed successfully", nil)
+			LogInfo("Database closed successfully", nil)
 		}
 	}()
 
-	logInfo("MCP Server Step1 starting", map[string]interface{}{
+	LogInfo("MCP Server Step1 starting", map[string]interface{}{
 		"version":   "1.0.0",
 		"log_level": logLevel,
 		"pid":       os.Getpid(),
@@ -345,7 +89,7 @@ func main() {
 		server.WithLogging(),
 	)
 	mcpServer = s
-	logPerformanceMetrics("mcp_server_init", time.Since(serverStart), nil)
+	LogPerformanceMetrics("mcp_server_init", time.Since(serverStart), nil)
 
 	// Register tools with enhanced logging
 	registerTools(s)
@@ -354,18 +98,18 @@ func main() {
 	registerResources(s)
 
 	// Start server
-	logInfo("Starting stdio server", map[string]interface{}{
+	LogInfo("Starting stdio server", map[string]interface{}{
 		"startup_duration": time.Since(startTime).String(),
 	})
 
 	if err := server.ServeStdio(s); err != nil {
-		logFatal("Failed to start stdio server", err, nil)
+		LogFatal("Failed to start stdio server", err, nil)
 		log.Fatal(err)
 	}
 }
 
 func registerTools(s *server.MCPServer) {
-	logInfo("Registering MCP tools", nil)
+	LogInfo("Registering MCP tools", nil)
 
 	// Add tools with enhanced logging
 	s.AddTool(mcp.NewTool(
@@ -439,13 +183,13 @@ func registerTools(s *server.MCPServer) {
 		mcp.WithString("targetService", mcp.Description("Specific service to test")),
 	), enhanceToolHandler("quick_performance_test", handleQuickPerformanceTest))
 
-	logInfo("MCP tools registered successfully", map[string]interface{}{
+	LogInfo("MCP tools registered successfully", map[string]interface{}{
 		"tool_count": 9,
 	})
 }
 
 func registerResources(s *server.MCPServer) {
-	logInfo("Registering MCP resources", nil)
+	LogInfo("Registering MCP resources", nil)
 
 	// Add resources
 	s.AddResource(mcp.NewResource("sqlite://schema", "Database Schema",
@@ -457,7 +201,7 @@ func registerResources(s *server.MCPServer) {
 	s.AddResource(mcp.NewResource("sqlite://test-runs", "Test Runs",
 		mcp.WithResourceDescription("List recent performance test runs")), handleTestRunsResource)
 
-	logInfo("MCP resources registered successfully", map[string]interface{}{
+	LogInfo("MCP resources registered successfully", map[string]interface{}{
 		"resource_count": 4,
 	})
 }
@@ -465,7 +209,7 @@ func registerResources(s *server.MCPServer) {
 // enhanceToolHandler wraps tool handlers with comprehensive logging
 func enhanceToolHandler(toolName string, handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		requestID := generateRequestID()
+		requestID := GenerateRequestID()
 		startTime := time.Now()
 
 		// Extract parameters for logging - using a simpler approach
@@ -473,7 +217,7 @@ func enhanceToolHandler(toolName string, handler func(context.Context, mcp.CallT
 		// Note: We can't easily access request.Params.Arguments due to interface{} type
 		// So we'll log the tool name and let individual handlers log their specific params
 
-		logToolStart(toolName, requestID, params)
+		LogToolStart(toolName, requestID, params)
 
 		// Execute the actual handler
 		result, err := handler(ctx, request)
@@ -503,7 +247,7 @@ func enhanceToolHandler(toolName string, handler func(context.Context, mcp.CallT
 			}
 		}
 
-		logToolEnd(toolName, requestID, duration, success, logData)
+		LogToolEnd(toolName, requestID, duration, success, logData)
 
 		return result, err
 	}
@@ -513,27 +257,27 @@ func initDB() {
 	start := time.Now()
 	var err error
 
-	logInfo("Opening SQLite database", map[string]interface{}{
+	LogInfo("Opening SQLite database", map[string]interface{}{
 		"database_path": "./perf_test.db",
 	})
 
 	db, err = sql.Open("sqlite3", "./perf_test.db")
 	if err != nil {
-		logFatal("Failed to open database", err, nil)
+		LogFatal("Failed to open database", err, nil)
 		log.Fatal(err)
 	}
 
-	logDatabaseOperation("open", time.Since(start), err, map[string]interface{}{
+	LogDatabaseOperation("open", time.Since(start), err, map[string]interface{}{
 		"database_path": "./perf_test.db",
 	})
 
 	// Test connection
 	start = time.Now()
 	if err := db.Ping(); err != nil {
-		logFatal("Failed to ping database", err, nil)
+		LogFatal("Failed to ping database", err, nil)
 		log.Fatal(err)
 	}
-	logDatabaseOperation("ping", time.Since(start), nil, nil)
+	LogDatabaseOperation("ping", time.Since(start), nil, nil)
 
 	// Create tables
 	start = time.Now()
@@ -621,15 +365,15 @@ func initDB() {
 	);`
 
 	if _, err := db.Exec(schema); err != nil {
-		logFatal("Failed to create database schema", err, nil)
+		LogFatal("Failed to create database schema", err, nil)
 		log.Fatal(err)
 	}
 
-	logDatabaseOperation("create_schema", time.Since(start), nil, map[string]interface{}{
+	LogDatabaseOperation("create_schema", time.Since(start), nil, map[string]interface{}{
 		"tables_created": 8,
 	})
 
-	logInfo("Database initialized successfully", map[string]interface{}{
+	LogInfo("Database initialized successfully", map[string]interface{}{
 		"total_duration": time.Since(start).String(),
 	})
 }
@@ -715,11 +459,11 @@ func writeComposeToTemp(content string, sessionId int64) (string, error) {
 func handleSetupEnvironment(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	composePath, err := request.RequireString("composePath")
 	if err != nil {
-		logError("Missing required composePath", err, nil)
+		LogError("Missing required composePath", err, nil)
 		return mcp.NewToolResultError("Missing required composePath"), nil
 	}
 
-	logInfo("Setting up test environment", map[string]interface{}{
+	LogInfo("Setting up test environment", map[string]interface{}{
 		"composePath": composePath,
 		"component":   "setup_environment",
 	})
@@ -728,7 +472,7 @@ func handleSetupEnvironment(ctx context.Context, request mcp.CallToolRequest) (*
 	// Fetch compose content
 	content, err := fetchComposeContent(composePath)
 	if err != nil {
-		logError("Failed to fetch compose content", err, map[string]interface{}{"composePath": composePath})
+		LogError("Failed to fetch compose content", err, map[string]interface{}{"composePath": composePath})
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
@@ -742,10 +486,10 @@ func handleSetupEnvironment(ctx context.Context, request mcp.CallToolRequest) (*
 	dbStart := time.Now()
 	composeFileId, err := storeComposeFile(composePath, content)
 	if err != nil {
-		logError("Failed to store compose file", err, map[string]interface{}{"composePath": composePath})
+		LogError("Failed to store compose file", err, map[string]interface{}{"composePath": composePath})
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to store compose file: %v", err)), nil
 	}
-	logDatabaseOperation("store_compose_file", time.Since(dbStart), nil, map[string]interface{}{
+	LogDatabaseOperation("store_compose_file", time.Since(dbStart), nil, map[string]interface{}{
 		"compose_file_id": composeFileId,
 		"source":          composePath,
 	})
@@ -756,11 +500,11 @@ func handleSetupEnvironment(ctx context.Context, request mcp.CallToolRequest) (*
 	result, err := db.Exec("INSERT INTO test_sessions (compose_file_id, session_name, status) VALUES (?, ?, ?)",
 		composeFileId, sessionName, "initialized")
 	if err != nil {
-		logError("Failed to create session", err, map[string]interface{}{"sessionName": sessionName})
+		LogError("Failed to create session", err, map[string]interface{}{"sessionName": sessionName})
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to create session: %v", err)), nil
 	}
 	sessionId, _ := result.LastInsertId()
-	logDatabaseOperation("create_session", time.Since(dbStart), nil, map[string]interface{}{
+	LogDatabaseOperation("create_session", time.Since(dbStart), nil, map[string]interface{}{
 		"session_id":   sessionId,
 		"session_name": sessionName,
 	})
@@ -773,13 +517,13 @@ func handleSetupEnvironment(ctx context.Context, request mcp.CallToolRequest) (*
 		_, err := db.Exec("INSERT INTO services (session_id, name, image, ports) VALUES (?, ?, ?, ?)",
 			sessionId, name, service.Image, ports)
 		if err != nil {
-			logError("Failed to store service", err, map[string]interface{}{
+			LogError("Failed to store service", err, map[string]interface{}{
 				"service_name": name,
 				"session_id":   sessionId,
 			})
 		} else {
 			servicesStored++
-			logDatabaseOperation("store_service", time.Since(dbStart), nil, map[string]interface{}{
+			LogDatabaseOperation("store_service", time.Since(dbStart), nil, map[string]interface{}{
 				"service_name": name,
 				"session_id":   sessionId,
 				"image":        service.Image,
@@ -787,7 +531,7 @@ func handleSetupEnvironment(ctx context.Context, request mcp.CallToolRequest) (*
 		}
 	}
 
-	logInfo("Services stored successfully", map[string]interface{}{
+	LogInfo("Services stored successfully", map[string]interface{}{
 		"services_stored": servicesStored,
 		"total_services":  len(compose.Services),
 		"session_id":      sessionId,
@@ -840,13 +584,13 @@ func handleDiscoverSpecs(ctx context.Context, request mcp.CallToolRequest) (*mcp
 	startCmd := exec.CommandContext(ctx, "docker", "compose", "-f", composePath, "-p", projectName, "up", "-d")
 	output, err := startCmd.CombinedOutput()
 	if err != nil {
-		logContainerOperation("start", projectName, time.Since(containerStart), err, map[string]interface{}{
+		LogContainerOperation("start", projectName, time.Since(containerStart), err, map[string]interface{}{
 			"output":     string(output),
 			"session_id": sessionId,
 		})
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to start containers: %v\n%s", err, output)), nil
 	}
-	logContainerOperation("start", projectName, time.Since(containerStart), nil, map[string]interface{}{
+	LogContainerOperation("start", projectName, time.Since(containerStart), nil, map[string]interface{}{
 		"session_id":   sessionId,
 		"compose_path": composePath,
 	})
@@ -856,7 +600,7 @@ func handleDiscoverSpecs(ctx context.Context, request mcp.CallToolRequest) (*mcp
 		stopStart := time.Now()
 		stopCmd := exec.Command("docker", "compose", "-f", composePath, "-p", projectName, "down", "-v")
 		err := stopCmd.Run()
-		logContainerOperation("stop", projectName, time.Since(stopStart), err, map[string]interface{}{
+		LogContainerOperation("stop", projectName, time.Since(stopStart), err, map[string]interface{}{
 			"session_id": sessionId,
 		})
 	}()
@@ -1040,13 +784,13 @@ func handleRunTest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallT
 	startCmd := exec.CommandContext(ctx, "docker", "compose", "-f", composePath, "-p", projectName, "up", "-d")
 	containerOutput, err := startCmd.CombinedOutput()
 	if err != nil {
-		logContainerOperation("start", projectName, time.Since(containerStart), err, map[string]interface{}{
+		LogContainerOperation("start", projectName, time.Since(containerStart), err, map[string]interface{}{
 			"output":  string(containerOutput),
 			"test_id": testId,
 		})
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to start containers: %v\n%s", err, containerOutput)), nil
 	}
-	logContainerOperation("start", projectName, time.Since(containerStart), nil, map[string]interface{}{
+	LogContainerOperation("start", projectName, time.Since(containerStart), nil, map[string]interface{}{
 		"test_id":      testId,
 		"compose_path": composePath,
 	})
@@ -1056,7 +800,7 @@ func handleRunTest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallT
 		stopStart := time.Now()
 		stopCmd := exec.Command("docker", "compose", "-f", composePath, "-p", projectName, "down", "-v")
 		err := stopCmd.Run()
-		logContainerOperation("stop", projectName, time.Since(stopStart), err, map[string]interface{}{
+		LogContainerOperation("stop", projectName, time.Since(stopStart), err, map[string]interface{}{
 			"test_id": testId,
 		})
 	}()
@@ -1088,7 +832,7 @@ func handleRunTest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallT
 		tmpFile.Name())
 
 	testStart := time.Now()
-	logInfo("Starting k6 test execution", map[string]interface{}{
+	LogInfo("Starting k6 test execution", map[string]interface{}{
 		"test_id":     testId,
 		"run_id":      runId,
 		"vus":         vus,
@@ -1100,7 +844,7 @@ func handleRunTest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallT
 	testDuration := time.Since(testStart)
 
 	if err != nil {
-		logError("k6 test execution failed", err, map[string]interface{}{
+		LogError("k6 test execution failed", err, map[string]interface{}{
 			"test_id":  testId,
 			"run_id":   runId,
 			"duration": testDuration.String(),
@@ -1111,7 +855,7 @@ func handleRunTest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallT
 
 	// Convert testId string to int64 for logging
 	testIdInt, _ := strconv.ParseInt(testId, 10, 64)
-	logTestExecution("performance", testIdInt, testDuration, map[string]interface{}{
+	LogTestExecution("performance", testIdInt, testDuration, map[string]interface{}{
 		"run_id":      runId,
 		"vus":         vus,
 		"duration":    duration,
@@ -1388,14 +1132,14 @@ func generateJSArray(items []string) string {
 func handleTestApplication(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	composeSource, err := request.RequireString("composeSource")
 	if err != nil {
-		logError("Missing required composeSource", err, nil)
+		LogError("Missing required composeSource", err, nil)
 		return mcp.NewToolResultError("Missing required composeSource"), nil
 	}
 
 	testType := request.GetString("testType", "standard")
 	endpoints := request.GetString("endpoints", "")
 
-	logInfo("Starting automated application testing", map[string]interface{}{
+	LogInfo("Starting automated application testing", map[string]interface{}{
 		"composeSource": composeSource,
 		"testType":      testType,
 		"endpoints":     endpoints,
@@ -1601,7 +1345,7 @@ export default function () {
 func handleQuickPerformanceTest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	composeSource, err := request.RequireString("composeSource")
 	if err != nil {
-		logError("Missing required composeSource", err, nil)
+		LogError("Missing required composeSource", err, nil)
 		return mcp.NewToolResultError("Missing required composeSource"), nil
 	}
 
@@ -1609,7 +1353,7 @@ func handleQuickPerformanceTest(ctx context.Context, request mcp.CallToolRequest
 	duration := request.GetString("duration", "2m")
 	// targetService := request.GetString("targetService", "") // TODO: implement service targeting
 
-	logInfo("Starting quick performance test", map[string]interface{}{
+	LogInfo("Starting quick performance test", map[string]interface{}{
 		"composeSource": composeSource,
 		"vus":           vus,
 		"duration":      duration,
@@ -1625,13 +1369,13 @@ func handleQuickPerformanceTest(ctx context.Context, request mcp.CallToolRequest
 	// Fetch and store compose
 	content, err := fetchComposeContent(composeSource)
 	if err != nil {
-		logError("Failed to fetch compose content", err, map[string]interface{}{"composeSource": composeSource})
+		LogError("Failed to fetch compose content", err, map[string]interface{}{"composeSource": composeSource})
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch compose: %v", err)), nil
 	}
 
 	composeFileId, err := storeComposeFile(composeSource, content)
 	if err != nil {
-		logError("Failed to store compose file", err, map[string]interface{}{"composeSource": composeSource})
+		LogError("Failed to store compose file", err, map[string]interface{}{"composeSource": composeSource})
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to store compose file: %v", err)), nil
 	}
 
@@ -1640,7 +1384,7 @@ func handleQuickPerformanceTest(ctx context.Context, request mcp.CallToolRequest
 	result, err := db.Exec("INSERT INTO test_sessions (compose_file_id, session_name, status) VALUES (?, ?, ?)",
 		composeFileId, sessionName, "running")
 	if err != nil {
-		logError("Failed to create session", err, map[string]interface{}{"sessionName": sessionName})
+		LogError("Failed to create session", err, map[string]interface{}{"sessionName": sessionName})
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to create session: %v", err)), nil
 	}
 	sessionId, _ := result.LastInsertId()
@@ -1648,7 +1392,7 @@ func handleQuickPerformanceTest(ctx context.Context, request mcp.CallToolRequest
 	// Write and start
 	composePath, err := writeComposeToTemp(content, sessionId)
 	if err != nil {
-		logError("Failed to write compose to temp", err, map[string]interface{}{"sessionId": sessionId})
+		LogError("Failed to write compose to temp", err, map[string]interface{}{"sessionId": sessionId})
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to write compose file: %v", err)), nil
 	}
 	defer os.RemoveAll(filepath.Dir(composePath))
@@ -1658,13 +1402,13 @@ func handleQuickPerformanceTest(ctx context.Context, request mcp.CallToolRequest
 	startCmd := exec.CommandContext(ctx, "docker", "compose", "-f", composePath, "-p", projectName, "up", "-d")
 	containerOutput, err := startCmd.CombinedOutput()
 	if err != nil {
-		logContainerOperation("start", projectName, time.Since(containerStart), err, map[string]interface{}{
+		LogContainerOperation("start", projectName, time.Since(containerStart), err, map[string]interface{}{
 			"output":     string(containerOutput),
 			"session_id": sessionId,
 		})
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to start containers: %v\n%s", err, containerOutput)), nil
 	}
-	logContainerOperation("start", projectName, time.Since(containerStart), nil, map[string]interface{}{
+	LogContainerOperation("start", projectName, time.Since(containerStart), nil, map[string]interface{}{
 		"session_id":   sessionId,
 		"compose_path": composePath,
 	})
@@ -1673,12 +1417,12 @@ func handleQuickPerformanceTest(ctx context.Context, request mcp.CallToolRequest
 		stopStart := time.Now()
 		stopCmd := exec.Command("docker", "compose", "-f", composePath, "-p", projectName, "down", "-v")
 		err := stopCmd.Run()
-		logContainerOperation("stop", projectName, time.Since(stopStart), err, map[string]interface{}{
+		LogContainerOperation("stop", projectName, time.Since(stopStart), err, map[string]interface{}{
 			"session_id": sessionId,
 		})
 	}()
 
-	logInfo("Waiting for services to start", map[string]interface{}{
+	LogInfo("Waiting for services to start", map[string]interface{}{
 		"wait_time":  "10s",
 		"session_id": sessionId,
 	})
@@ -1696,7 +1440,7 @@ export default function () {
 	// Run quick test
 	tmpFile, err := os.CreateTemp("", "k6-quick-*.js")
 	if err != nil {
-		logError("Failed to create temp file", err, nil)
+		LogError("Failed to create temp file", err, nil)
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to create temp file: %v", err)), nil
 	}
 	tmpFile.WriteString(testScript)
@@ -1704,7 +1448,7 @@ export default function () {
 	defer os.Remove(tmpFile.Name())
 
 	testStart := time.Now()
-	logInfo("Starting k6 test execution", map[string]interface{}{
+	LogInfo("Starting k6 test execution", map[string]interface{}{
 		"vus":         vus,
 		"duration":    duration,
 		"script_path": tmpFile.Name(),
@@ -1716,7 +1460,7 @@ export default function () {
 	testDuration := time.Since(testStart)
 
 	if err != nil {
-		logError("k6 test execution failed", err, map[string]interface{}{
+		LogError("k6 test execution failed", err, map[string]interface{}{
 			"session_id": sessionId,
 			"duration":   testDuration.String(),
 			"output":     string(output),
@@ -1724,7 +1468,7 @@ export default function () {
 		return mcp.NewToolResultError(fmt.Sprintf("k6 test failed: %v\n%s", err, output)), nil
 	}
 
-	logInfo("k6 test completed successfully", map[string]interface{}{
+	LogInfo("k6 test completed successfully", map[string]interface{}{
 		"session_id":  sessionId,
 		"duration":    testDuration.String(),
 		"output_size": len(output),
