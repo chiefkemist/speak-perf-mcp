@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 
 	mcpgolang "github.com/mark3labs/mcp-go/mcp"
