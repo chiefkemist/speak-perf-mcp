@@ -1,0 +1,104 @@
+
+#+author: ChiefKemist
+#+date: <2025-07-12 Sat>
+#+title 🚀 Speak Performance into Existence: AI-Driven Application Testing with k6
+
+
+* About performance testing
+Performance testing evaluates how a system behaves under load, ensuring reliability, scalability, and responsiveness. It helps identify bottlenecks before they impact users.
+
+** Key Definitions
+- *Load Testing*: Simulates expected user traffic.
+- *Stress Testing*: Pushes system beyond limits to find breaking points.
+- *Spike Testing*: Sudden increases in load.
+- *Endurance Testing*: Prolonged load to check stability.
+
+** Why It Matters
+- Prevents outages
+- Improves user experience
+- Reduces costs by early detection
+
+* Overview of k6 including scripting
+k6 is an open-source load testing tool for testing the performance of APIs, microservices, and websites. It uses JavaScript for scripting.
+
+** k6 Features
+- Modern scripting (ES6 JS)
+- CLI and cloud execution
+- Metrics and thresholds
+
+** Example k6 Script
+#+begin_src javascript
+import http from 'k6/http';
+import { check } from 'k6';
+export default function () {
+  let res = http.get('https://test.k6.io');
+  check(res, { 'status is 200': (r) => r.status === 200 });
+}
+#+end_src
+
+** Mermaid: k6 Test Flow
+#+begin mermaid
+flowchart TD
+  A["Write k6 Script"] --> B["Run Test (CLI/Cloud)"]
+  B --> C["Collect Metrics"]
+  C --> D["Analyze Results"]
+#+end_src
+
+** References
+- https://k6.io/docs/
+- https://grafana.com/open-source/k6/
+
+* Manual execution of k6 scripts
+Run scripts locally using the CLI:
+#+begin_src shell
+k6 run script.js
+#+end_src
+
+** Output
+- Real-time metrics in terminal
+- Optionally export to JSON, InfluxDB, etc.
+
+* Step 0: Wrapping K6 in MCP over stdio
+Integrate k6 with a Machine Control Protocol (MCP) interface using standard input/output for automation.
+
+** Narrative
+- MCP acts as a controller, sending commands to k6 and parsing results.
+- Enables scripting and orchestration from other tools.
+
+** Mermaid: MCP-K6 Interaction
+#+begin mermaid
+sequenceDiagram
+  participant MCP
+  participant k6
+  MCP->>k6: Start test (via stdio)
+  k6-->>MCP: Stream results
+  MCP->>k6: Stop/Query status
+#+end_src
+
+* Step 1: Make the setup portable still over stdio and expose resources
+Package the solution (e.g., Docker) for portability. Expose logs, metrics, and artifacts via well-defined resources.
+
+** Narrative
+- Use containers for consistent environments.
+- Expose endpoints for logs and results.
+
+** References
+- https://docs.docker.com/
+
+* Step 2: Move setup to remote with SSE/streaming HTTP
+Transition to a remote architecture using Server-Sent Events (SSE) or streaming HTTP for real-time updates.
+
+** Narrative
+- Decouple test runner and controller.
+- Stream results to dashboards or CI/CD systems.
+
+** Mermaid: Remote Streaming Architecture
+#+begin mermaid
+flowchart LR
+  Client -- SSE/HTTP --> Server
+  Server -- stdio --> k6
+#+end_src
+
+** References
+- https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events
+- https://en.wikipedia.org/wiki/Streaming_media
