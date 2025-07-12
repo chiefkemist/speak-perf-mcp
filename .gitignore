@@ -1,0 +1,81 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go binary output
+bin/
+tmp/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+coverage.html
+
+# Go module cache
+go.sum
+
+# Dependency directories
+vendor/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Air live reload
+.air.toml.tmp
+tmp/
+
+# K6 test results and temporary files
+*.json
+k6-results-*.json
+k6-load-results-*.json
+k6-stress-results-*.json
+stress-results.json
+/tmp/k6-*.js
+/tmp/k6-*.json
+
+# Log files
+*.log
+build-errors.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Build artifacts
+mcp-server
+web-server
+mcp-server-step*
+web-server-step*
+
+# Screenshots from browser tests
+screenshots/
+
+# Performance test reports
+reports/
+*.html

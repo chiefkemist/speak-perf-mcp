@@ -1,0 +1,6 @@
+go 1.24.4
+
+use (
+	./step0/mcp
+	./step0/web
+)
